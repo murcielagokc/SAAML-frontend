@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>SAAML - Sistema de Aprovisionamiento Autónomo</title>
+  <meta name="description" content="Dashboard interactivo para la gestión de compras autónomas basadas en Machine Learning y Optimización Knapsack.">
+  <link rel="stylesheet" href="/src/style.css">
+</head>
+<body>
+
+  <!-- Encabezado de la Aplicación -->
+  <header class="app-header">
+    <div class="brand-wrapper">
+      <div class="brand-logo">
+        <span>⚡</span> SAAML
+      </div>
+      <span class="brand-tag">v1.0.0-beta</span>
+    </div>
+
+    <div class="header-actions">
+      <!-- Indicador de Salud del Servidor -->
+      <div class="status-pill" id="healthPill" title="Estado de la conexión al Backend">
+        <span class="status-dot" id="statusDot"></span>
+        <span id="statusText">Conectando...</span>
+      </div>
+
+      <!-- Configuración de API URL -->
+      <button class="btn btn-secondary btn-sm" id="btnConfigApi" title="Cambiar URL de Backend (Localhost / Render)">
+        ⚙️ <span id="currentApiHost">localhost:8000</span>
+      </button>
+
+      <!-- Botón de Usuario / Sesión -->
+      <div id="userContainer">
+        <button class="btn btn-primary btn-sm" id="btnOpenLogin">
+          👤 Iniciar Sesión
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Pestañas de Navegación por Módulo -->
+  <nav class="tabs-container">
+    <button class="nav-tab active" data-tab="tab-catalog">
+      <span>📦</span> Catálogo & Stock <span class="tab-badge">RF01</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-ml">
+      <span>🧠</span> Predicción Demanda <span class="tab-badge">RF02</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-optimizer">
+      <span>⚡</span> Optimizador Knapsack <span class="tab-badge">RF04</span>
+    </button>
+    <button class="nav-tab" data-tab="tab-orders">
+      <span>📋</span> Órdenes de Compra <span class="tab-badge">RF05</span>
+    </button>
+  </nav>
+
+  <!-- Contenedor Principal -->
+  <main class="main-content">
+
+    <!-- PANEL 1: CATÁLOGO DE PRODUCTOS (RF01) -->
+    <section class="tab-panel" id="tab-catalog">
+      <div class="section-header">
+        <div>
+          <h1 class="section-title"><span>📦</span> Catálogo Maestro de Productos</h1>
+          <p class="section-desc">Monitoreo en tiempo real de niveles de inventario, stock de seguridad, costos y restricciones MOQ.</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnRefreshCatalog">🔄 Actualizar</button>
+      </div>
+
+      <div class="metrics-grid" id="catalogMetrics">
+        <div class="metric-card">
+          <div class="metric-title">Total SKUs Activos</div>
+          <div class="metric-val" id="kpiTotalSkus">-</div>
+          <div class="metric-sub">Catálogo sincronizado</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Valor en Inventario</div>
+          <div class="metric-val" id="kpiStockValue">$0.00</div>
+          <div class="metric-sub">Valuación a costo unitario</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">En Riesgo de Quiebre</div>
+          <div class="metric-val" id="kpiStockRisk" style="color: var(--accent-rose);">-</div>
+          <div class="metric-sub">Stock actual &lt; Stock seguridad</div>
+        </div>
+      </div>
+
+      <div class="table-responsive">
+        <table>
+          <thead>
+            <tr>
+              <th>SKU</th>
+              <th>Producto</th>
+              <th>Categoría</th>
+              <th>Stock Actual</th>
+              <th>Stock Seguridad</th>
+              <th>Costo Unitario</th>
+              <th>Precio Venta</th>
+              <th>Margen</th>
+              <th>Lote / MOQ</th>
+            </tr>
+          </thead>
+          <tbody id="productsTableBody">
+            <tr><td colspan="9" style="text-align: center; color: var(--text-dim);">Cargando catálogo...</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- PANEL 2: MACHINE LEARNING & PRONÓSTICO (RF02, RF06) -->
+    <section class="tab-panel" id="tab-ml" style="display: none;">
+      <div class="section-header">
+        <div>
+          <h1 class="section-title"><span>🧠</span> Motor Predictivo de Demanda (Random Forest)</h1>
+          <p class="section-desc">Proyecciones de ventas a horizonte dinámico con bandas de confianza P10 (pesimista) y P90 (optimista).</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+          <select id="selectHorizon" class="form-input" style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;">
+            <option value="7">Horizonte: 7 días</option>
+            <option value="14" selected>Horizonte: 14 días</option>
+            <option value="30">Horizonte: 30 días</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="btnTrainML" title="Reentrenar Random Forest">
+            🔄 Reentrenar Modelo (RF06)
+          </button>
+        </div>
+      </div>
+
+      <!-- Métricas MLOps -->
+      <div class="metrics-grid">
+        <div class="metric-card">
+          <div class="metric-title">Error Promedio (MAPE)</div>
+          <div class="metric-val" id="kpiMape" style="color: #38bdf8;">18.2%</div>
+          <div class="metric-sub">Mean Absolute Percentage Error</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Precisión / R² Score</div>
+          <div class="metric-val" style="color: var(--accent-emerald);">0.85</div>
+          <div class="metric-sub">RandomForestRegressor v1.0.0</div>
+        </div>
+        <div class="metric-card">
+          <div class="metric-title">Histórico de Entrenamiento</div>
+          <div class="metric-val">365 días</div>
+          <div class="metric-sub">Series temporales en Atlas</div>
+        </div>
+      </div>
+
+      <!-- Tarjetas de Pronóstico por SKU -->
+      <h2 style="font-size: 1.15rem; font-weight: 700; margin-bottom: 1rem;">Pronósticos de Demanda por Producto</h2>
+      <div id="forecastCardsContainer" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(360px, 1fr)); gap: 1.5rem;">
+        <p style="color: var(--text-dim);">Cargando proyecciones de demanda...</p>
+      </div>
+    </section>
+
+    <!-- PANEL 3: OPTIMIZACIÓN PRESUPUESTAL KNAPSACK (RF04) -->
+    <section class="tab-panel" id="tab-optimizer" style="display: none;">
+      <div class="section-header">
+        <div>
+          <h1 class="section-title"><span>⚡</span> Optimización Matemática Knapsack (MILP)</h1>
+          <p class="section-desc">Asignación óptima de capital bajo restricciones de presupuesto, volumen y requerimientos de lote mínimo (PuLP).</p>
+        </div>
+      </div>
+
+      <!-- Formulario de Optimización -->
+      <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--border-subtle); border-radius: var(--radius-md); padding: 1.5rem; margin-bottom: 2rem;">
+        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 1.25rem; align-items: flex-end;">
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Ciclo Presupuestal Activo</label>
+            <select id="optSelectCycle" class="form-input"></select>
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Presupuesto a Evaluar (USD)</label>
+            <input type="number" id="optInputBudget" class="form-input" value="15000" min="100" step="500">
+          </div>
+          <div class="form-group" style="margin-bottom: 0;">
+            <label class="form-label">Horizonte de Días</label>
+            <input type="number" id="optInputDays" class="form-input" value="14" min="1" max="90">
+          </div>
+          <div style="display: flex; gap: 0.5rem; align-items: center; padding-bottom: 0.2rem;">
+            <button class="btn btn-primary" id="btnRunOptimization" style="width: 100%;">
+              ⚡ Resolver Knapsack
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Resultados de la Optimización -->
+      <div id="optimizationResultWrapper" style="display: none;">
+        <div class="metrics-grid">
+          <div class="metric-card">
+            <div class="metric-title">Estatus del Solver</div>
+            <div class="metric-val" id="optResStatus" style="color: var(--accent-emerald);">OPTIMAL</div>
+            <div class="metric-sub" id="optResTime">Tiempo: 12 ms (&lt; 30s RNF01)</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-title">Inversión Comprometida</div>
+            <div class="metric-val" id="optResSpent" style="color: #818cf8;">$0.00</div>
+            <div class="metric-sub" id="optResRemaining">Remanente: $0.00</div>
+          </div>
+          <div class="metric-card">
+            <div class="metric-title">Cobertura de Demanda</div>
+            <div class="metric-val" id="optResCoverage" style="color: var(--accent-cyan);">0%</div>
+            <div class="metric-sub" id="optResSkusCount">0 SKUs seleccionados</div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin: 1.5rem 0 1rem;">
+          <h2 style="font-size: 1.15rem; font-weight: 700;">Recomendación Detallada de Compra</h2>
+          <button class="btn btn-success" id="btnGenerateOrdersFromOpt">
+            📄 Generar Órdenes de Compra Propuestas (RF05)
+          </button>
+        </div>
+
+        <div class="table-responsive">
+          <table>
+            <thead>
+              <tr>
+                <th>SKU</th>
+                <th>Producto</th>
+                <th>Proveedor</th>
+                <th>Demanda Proyectada</th>
+                <th>Stock Actual</th>
+                <th>Déficit Neto</th>
+                <th>Cantidad Sugerida (ML)</th>
+                <th>Costo Unitario</th>
+                <th>Subtotal Inversión</th>
+                <th>Cobertura Déficit</th>
+              </tr>
+            </thead>
+            <tbody id="optItemsTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- PANEL 4: ÓRDENES DE COMPRA (RF05) -->
+    <section class="tab-panel" id="tab-orders" style="display: none;">
+      <div class="section-header">
+        <div>
+          <h1 class="section-title"><span>📋</span> Gestión y Aprobación de Órdenes de Compra</h1>
+          <p class="section-desc">Revisión de propuestas automáticas agrupadas por proveedor comercial, ajuste de cantidades y aprobación final.</p>
+        </div>
+        <div style="display: flex; gap: 0.75rem;">
+          <select id="filterOrderStatus" class="form-input" style="width: auto; padding: 0.4rem 0.8rem; font-size: 0.85rem;">
+            <option value="">Todos los Estados</option>
+            <option value="BORRADOR_PROPUESTA">Solo Borradores</option>
+            <option value="APROBADA">Solo Aprobadas</option>
+            <option value="RECIBIDA_TOTAL">Histórico Recibidas</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="btnRefreshOrders">🔄 Refrescar</button>
+        </div>
+      </div>
+
+      <div id="ordersListContainer" style="display: flex; flex-direction: column; gap: 1.5rem;">
+        <p style="color: var(--text-dim);">Cargando órdenes de compra...</p>
+      </div>
+    </section>
+
+  </main>
+
+  <!-- MODAL: LOGIN -->
+  <div class="modal-overlay" id="loginModal">
+    <div class="modal-card">
+      <h2 class="modal-title">Iniciar Sesión</h2>
+      <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1.5rem;">
+        Autenticación segura con JWT y control de roles (RNF-SEG).
+      </p>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem;">
+        <button class="btn btn-secondary btn-sm" id="btnFillAdmin" style="flex: 1;">👑 Admin Demo</button>
+        <button class="btn btn-secondary btn-sm" id="btnFillGerente" style="flex: 1;">💼 Gerente Demo</button>
+      </div>
+
+      <form id="loginForm">
+        <div class="form-group">
+          <label class="form-label">Correo Electrónico</label>
+          <input type="email" id="loginEmail" class="form-input" placeholder="admin@saaml.com" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Contraseña</label>
+          <input type="password" id="loginPassword" class="form-input" placeholder="••••••••" required>
+        </div>
+        <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 2rem;">
+          <button type="button" class="btn btn-secondary" id="btnCloseLogin">Cancelar</button>
+          <button type="submit" class="btn btn-primary" id="btnSubmitLogin">Ingresar</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- MODAL: CONFIGURAR API URL -->
+  <div class="modal-overlay" id="configApiModal">
+    <div class="modal-card">
+      <h2 class="modal-title">Configuración de API Backend</h2>
+      <p style="color: var(--text-muted); font-size: 0.88rem; margin-bottom: 1.5rem;">
+        Permite alternar entre el backend local y el servicio desplegado en Render.
+      </p>
+
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1.25rem;">
+        <button class="btn btn-secondary btn-sm" id="btnSetLocalhost" style="flex: 1;">💻 Localhost:8000</button>
+        <button class="btn btn-secondary btn-sm" id="btnSetRender" style="flex: 1;">☁️ Render URL</button>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Base URL de la API</label>
+        <input type="text" id="inputApiUrl" class="form-input" placeholder="http://localhost:8000/api/v1">
+      </div>
+
+      <div style="display: flex; justify-content: flex-end; gap: 0.75rem; margin-top: 2rem;">
+        <button class="btn btn-secondary" id="btnCloseConfigApi">Cerrar</button>
+        <button class="btn btn-primary" id="btnSaveConfigApi">Guardar y Reconectar</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Contenedor de Notificaciones Toast -->
+  <div class="toast-container" id="toastContainer"></div>
+
+  <!-- Script Principal de la Aplicación -->
+  <script type="module" src="/src/main.js"></script>
+</body>
+</html>
