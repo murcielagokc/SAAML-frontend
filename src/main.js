@@ -1,74 +1,81 @@
 import { api } from './api.js';
 
-// Estado global de la aplicación
+let activeProducts = [];
+let activeProjections = [];
 let lastOptimizationSessionId = null;
-let currentProducts = [];
 
-// Inicialización
-document.addEventListener('DOMContentLoaded', () => {
+// Inicialización de la aplicación
+document.addEventListener('DOMContentLoaded', async () => {
   initTabs();
   initModals();
-  checkServerHealth();
+  await checkServerHealth();
   updateUserUI();
 
-  // Cargar catálogo inicial
-  loadCatalog();
+  // Si no hay sesión, auto-login con credenciales demo para mostrar los datos de inmediato
+  if (!api.isAuthenticated()) {
+    try {
+      await api.login('admin@saaml.com', 'Admin123*');
+      updateUserUI();
+    } catch (_) {}
+  }
 
-  // Event Listeners
-  document.getElementById('btnRefreshCatalog').addEventListener('click', loadCatalog);
+  // Cargar pestaña inicial (Inventario)
+  await loadInventory();
+
+  // Escuchadores de eventos
+  document.getElementById('btnRefreshCatalog').addEventListener('click', loadInventory);
   document.getElementById('selectHorizon').addEventListener('change', () => loadForecasts());
   document.getElementById('btnTrainML').addEventListener('click', handleTrainML);
   document.getElementById('btnRunOptimization').addEventListener('click', handleRunOptimization);
-  document.getElementById('btnGenerateOrdersFromOpt').addEventListener('click', handleGenerateOrdersFromOpt);
+  document.getElementById('btnGenerateOrders').addEventListener('click', handleGenerateOrders);
   document.getElementById('filterOrderStatus').addEventListener('change', () => loadOrders());
   document.getElementById('btnRefreshOrders').addEventListener('click', loadOrders);
 });
 
 // -----------------------------------------------------------------------------
-// NOTIFICACIONES TOAST
-// -----------------------------------------------------------------------------
-function showToast(message, type = 'info') {
-  const container = document.getElementById('toastContainer');
-  const toast = document.createElement('div');
-  toast.className = `toast ${type}`;
-
-  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
-  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
-  container.appendChild(toast);
-
-  setTimeout(() => {
-    toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
-}
-
-// -----------------------------------------------------------------------------
-// PESTAÑAS
+// NAVEGACIÓN POR VENTANAS / PESTAÑAS
 // -----------------------------------------------------------------------------
 function initTabs() {
-  const tabs = document.querySelectorAll('.nav-tab');
-  tabs.forEach(tab => {
-    tab.addEventListener('click', () => {
-      tabs.forEach(t => t.classList.remove('active'));
-      tab.classList.add('active');
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
 
-      const targetId = tab.dataset.tab;
-      document.querySelectorAll('.tab-panel').forEach(p => p.style.display = 'none');
-      const targetPanel = document.getElementById(targetId);
-      if (targetPanel) {
-        targetPanel.style.display = 'block';
+      const targetId = btn.dataset.tab;
+      document.querySelectorAll('.tab-view').forEach(view => view.classList.remove('active'));
+      const targetView = document.getElementById(targetId);
+      if (targetView) {
+        targetView.classList.add('active');
       }
 
-      // Carga perezosa de datos según pestaña
-      if (targetId === 'tab-ml') loadForecasts();
-      if (targetId === 'tab-optimizer') loadBudgetCycles();
+      // Cargar datos según pestaña
+      if (targetId === 'tab-inventory') loadInventory();
+      if (targetId === 'tab-forecast') loadForecasts();
+      if (targetId === 'tab-budget-plan') loadBudgetCycles();
       if (targetId === 'tab-orders') loadOrders();
     });
   });
 }
 
 // -----------------------------------------------------------------------------
-// SALUD DEL SERVIDOR & API CONFIG
+// NOTIFICACIONES
+// -----------------------------------------------------------------------------
+function showToast(message, type = 'info') {
+  const container = document.getElementById('toastContainer');
+  const toast = document.createElement('div');
+  toast.className = `toast ${type}`;
+  toast.textContent = message;
+  container.appendChild(toast);
+
+  setTimeout(() => {
+    toast.style.opacity = '0';
+    setTimeout(() => toast.remove(), 250);
+  }, 3500);
+}
+
+// -----------------------------------------------------------------------------
+// SALUD DEL SERVIDOR Y CONEXIÓN
 // -----------------------------------------------------------------------------
 async function checkServerHealth() {
   const dot = document.getElementById('statusDot');
@@ -85,20 +92,20 @@ async function checkServerHealth() {
   try {
     const health = await api.getHealth();
     if (health.status === 'OK' && health.database?.connected) {
-      dot.className = 'status-dot connected';
-      text.textContent = 'En línea (Atlas OK)';
+      dot.className = 'status-dot online';
+      text.textContent = 'En línea';
     } else {
-      dot.className = 'status-dot disconnected';
-      text.textContent = 'API OK (BD desconectada)';
+      dot.className = 'status-dot offline';
+      text.textContent = 'Sin base de datos';
     }
-  } catch (err) {
-    dot.className = 'status-dot disconnected';
+  } catch (_) {
+    dot.className = 'status-dot offline';
     text.textContent = 'Desconectado';
   }
 }
 
 // -----------------------------------------------------------------------------
-// AUTENTICACIÓN & MODALES
+// MODALES Y AUTENTICACIÓN
 // -----------------------------------------------------------------------------
 function initModals() {
   // Modal Login
@@ -124,13 +131,13 @@ function initModals() {
       loginModal.classList.remove('active');
       updateUserUI();
       showToast('Sesión iniciada correctamente', 'success');
-      loadCatalog();
+      loadInventory();
     } catch (err) {
       showToast(err.message, 'error');
     }
   });
 
-  // Modal Config API
+  // Modal API
   const configModal = document.getElementById('configApiModal');
   document.getElementById('btnConfigApi')?.addEventListener('click', () => {
     document.getElementById('inputApiUrl').value = api.getBaseUrl();
@@ -145,39 +152,34 @@ function initModals() {
     document.getElementById('inputApiUrl').value = 'https://saaml.onrender.com/api/v1';
   });
 
-  document.getElementById('btnSaveConfigApi')?.addEventListener('click', () => {
+  document.getElementById('btnSaveConfigApi')?.addEventListener('click', async () => {
     const newUrl = document.getElementById('inputApiUrl').value;
     api.setBaseUrl(newUrl);
     configModal.classList.remove('active');
-    checkServerHealth();
-    showToast(`URL de API actualizada: ${newUrl}`, 'info');
-    loadCatalog();
+    await checkServerHealth();
+    showToast(`Conectado a ${newUrl}`, 'info');
+    loadInventory();
   });
 }
 
 function updateUserUI() {
   const container = document.getElementById('userContainer');
   if (api.isAuthenticated()) {
-    const user = api.getUser() || { email: 'Usuario', rol: 'OPERADOR' };
+    const user = api.getUser() || { email: 'Admin' };
     container.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 0.75rem;">
-        <div style="text-align: right; line-height: 1.2;">
-          <div style="font-size: 0.82rem; font-weight: 700; color: #ffffff;">${user.email}</div>
-          <span class="badge badge-blue" style="font-size: 0.65rem;">${user.rol}</span>
-        </div>
-        <button class="btn btn-secondary btn-sm" id="btnLogout" title="Cerrar sesión">Salir</button>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span style="font-size: 0.8rem; color: #ffffff;">${user.email}</span>
+        <button class="btn btn-secondary btn-sm" id="btnLogout">Salir</button>
       </div>
     `;
     document.getElementById('btnLogout').addEventListener('click', () => {
       api.logout();
       updateUserUI();
-      showToast('Sesión finalizada', 'info');
+      showToast('Sesión cerrada', 'info');
     });
   } else {
     container.innerHTML = `
-      <button class="btn btn-primary btn-sm" id="btnOpenLogin">
-        👤 Iniciar Sesión
-      </button>
+      <button class="btn btn-primary btn-sm" id="btnOpenLogin">Iniciar Sesión</button>
     `;
     document.getElementById('btnOpenLogin').addEventListener('click', () => {
       document.getElementById('loginModal').classList.add('active');
@@ -186,156 +188,165 @@ function updateUserUI() {
 }
 
 // -----------------------------------------------------------------------------
-// PANEL 1: CATÁLOGO DE PRODUCTOS (RF01)
+// VENTANA 1: INVENTARIO DE PRODUCTOS
 // -----------------------------------------------------------------------------
-async function loadCatalog() {
-  const tbody = document.getElementById('productsTableBody');
-  tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-dim);">Cargando catálogo...</td></tr>`;
+async function loadInventory() {
+  const tbody = document.getElementById('inventoryTableBody');
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 2rem;">Cargando inventario...</td></tr>`;
 
   try {
     const res = await api.getProducts();
-    currentProducts = res.items || [];
+    activeProducts = res.items || [];
 
     // KPIs
-    document.getElementById('kpiTotalSkus').textContent = currentProducts.length;
+    document.getElementById('kpiTotalSkus').textContent = activeProducts.length;
 
     let totalVal = 0;
-    let riskCount = 0;
+    let lowCount = 0;
 
-    currentProducts.forEach(p => {
+    activeProducts.forEach(p => {
       totalVal += (p.stock_actual || 0) * (p.costo_unitario || 0);
       if ((p.stock_actual || 0) < (p.stock_seguridad || 0)) {
-        riskCount++;
+        lowCount++;
       }
     });
 
     document.getElementById('kpiStockValue').textContent = `$${totalVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-    document.getElementById('kpiStockRisk').textContent = riskCount;
+    document.getElementById('kpiLowStock').textContent = lowCount;
 
-    if (currentProducts.length === 0) {
-      tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--text-dim);">No hay productos registrados en el catálogo.</td></tr>`;
+    if (activeProducts.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 2rem;">No hay productos registrados.</td></tr>`;
       return;
     }
 
-    tbody.innerHTML = currentProducts.map(p => {
-      const isRisk = (p.stock_actual || 0) < (p.stock_seguridad || 0);
-      const stockBadge = isRisk 
-        ? `<span class="badge badge-red">${p.stock_actual} (Quiebre)</span>`
-        : `<span class="badge badge-green">${p.stock_actual}</span>`;
-
-      const margen = p.precio_venta - p.costo_unitario;
-      const margenPct = Math.round((margen / p.precio_venta) * 100);
+    tbody.innerHTML = activeProducts.map(p => {
+      const isLow = (p.stock_actual || 0) < (p.stock_seguridad || 0);
+      const statusBadge = isLow
+        ? `<span class="badge badge-danger">Stock Bajo</span>`
+        : `<span class="badge badge-success">Normal</span>`;
 
       return `
         <tr>
-          <td><code style="color: #818cf8; font-weight: 700;">${p.sku_code}</code></td>
-          <td style="font-weight: 600;">${p.nombre}</td>
-          <td><span class="badge badge-blue">${p.categoria}</span></td>
-          <td>${stockBadge}</td>
-          <td>${p.stock_seguridad}</td>
+          <td><code style="font-family: var(--font-mono); color: #93c5fd;">${p.sku_code}</code></td>
+          <td style="font-weight: 500;">${p.nombre}</td>
+          <td><span class="badge badge-neutral">${p.categoria}</span></td>
+          <td><strong>${p.stock_actual}</strong></td>
+          <td style="color: var(--text-muted);">${p.stock_seguridad}</td>
           <td>$${p.costo_unitario.toFixed(2)}</td>
           <td>$${p.precio_venta.toFixed(2)}</td>
-          <td style="color: var(--accent-emerald); font-weight: 700;">+$${margen.toFixed(2)} (${margenPct}%)</td>
-          <td>Lote: ${p.incremento_lote} / MOQ: ${p.moq}</td>
+          <td>${statusBadge}</td>
         </tr>
       `;
     }).join('');
 
   } catch (err) {
-    tbody.innerHTML = `<tr><td colspan="9" style="text-align: center; color: var(--accent-rose);">Error al cargar catálogo: ${err.message}. Asegúrate de iniciar sesión si es requerido.</td></tr>`;
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 2rem;">Error al conectar con el backend: ${err.message}</td></tr>`;
   }
 }
 
 // -----------------------------------------------------------------------------
-// PANEL 2: PRONÓSTICOS MACHINE LEARNING (RF02, RF06)
+// VENTANA 2: PREDICCIÓN DE VENTAS (DEMANDA)
 // -----------------------------------------------------------------------------
 async function loadForecasts() {
-  const horizon = parseInt(document.getElementById('selectHorizon').value, 10) || 14;
+  const horizonDays = parseInt(document.getElementById('selectHorizon').value, 10) || 14;
   const container = document.getElementById('forecastCardsContainer');
-  container.innerHTML = `<p style="color: var(--text-dim);">Calculando proyecciones para horizonte de ${horizon} días...</p>`;
+  document.getElementById('kpiForecastDaysSubtitle').textContent = `En los próximos ${horizonDays} días`;
+  container.innerHTML = `<p style="color: var(--text-dim); padding: 2rem;">Calculando predicciones...</p>`;
 
   try {
-    const res = await api.getForecastAll(horizon);
-    const projections = res.proyecciones || [];
+    const res = await api.getForecastAll(horizonDays);
+    activeProjections = res.proyecciones || [];
 
-    if (projections.length === 0) {
-      container.innerHTML = `<p style="color: var(--text-dim);">No se encontraron proyecciones generadas.</p>`;
-      return;
-    }
+    let totalDemand = 0;
+    let riskCount = 0;
+    let safeCount = 0;
 
-    container.innerHTML = projections.map(fc => {
-      const daily = fc.proyeccion_diaria || [];
-      const maxVal = Math.max(...daily.map(d => d.demanda_estimada), 1);
+    const cardsHtml = activeProjections.map(fc => {
+      const demand = Math.round(fc.demanda_total_proyectada || 0);
+      totalDemand += demand;
 
-      const chartBars = daily.slice(0, 14).map(d => {
-        const heightPct = Math.round((d.demanda_estimada / maxVal) * 100);
-        const dayLabel = d.fecha.slice(5); // MM-DD
-        return `
-          <div class="bar-col" title="${d.fecha}: ${d.demanda_estimada} unidades">
-            <span class="bar-val">${d.demanda_estimada}</span>
-            <div class="bar-fill" style="height: ${heightPct}%;"></div>
-            <span class="bar-label">${dayLabel}</span>
-          </div>
-        `;
-      }).join('');
+      const stockActual = fc.stock_actual || 0;
+      const deficit = Math.max(0, demand - stockActual);
+
+      if (deficit > 0) {
+        riskCount++;
+      } else {
+        safeCount++;
+      }
+
+      const alertClass = deficit > 0 ? 'badge-warning' : 'badge-success';
+      const alertText = deficit > 0 ? `Faltan ~${deficit} unidades` : 'Stock suficiente';
 
       return `
-        <div class="metric-card" style="padding: 1.5rem;">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.75rem;">
+        <div class="item-card">
+          <div class="item-card-header">
             <div>
-              <code style="color: #818cf8; font-weight: 700;">${fc.sku_code}</code>
-              <h3 style="font-size: 1.05rem; font-weight: 700; margin-top: 0.2rem;">${fc.nombre}</h3>
+              <div class="item-title">${fc.nombre}</div>
+              <div class="item-sku">${fc.sku_code}</div>
             </div>
-            <span class="badge badge-blue">Stock: ${fc.stock_actual}</span>
+            <span class="badge ${alertClass}">${alertText}</span>
           </div>
 
-          <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 0.5rem; background: rgba(0,0,0,0.25); padding: 0.75rem; border-radius: var(--radius-sm); margin-bottom: 1rem; text-align: center;">
-            <div>
-              <div style="font-size: 0.7rem; color: var(--text-dim);">P10 PESIMISTA</div>
-              <div style="font-size: 1.1rem; font-weight: 700; color: #fbbf24;">${fc.intervalo_confianza?.p10}</div>
-            </div>
-            <div>
-              <div style="font-size: 0.7rem; color: #818cf8; font-weight: 700;">DEMANDA ML</div>
-              <div style="font-size: 1.35rem; font-weight: 800; color: #ffffff;">${fc.demanda_total_proyectada}</div>
-            </div>
-            <div>
-              <div style="font-size: 0.7rem; color: var(--text-dim);">P90 OPTIMISTA</div>
-              <div style="font-size: 1.1rem; font-weight: 700; color: #34d399;">${fc.intervalo_confianza?.p90}</div>
-            </div>
+          <div class="prediction-stat">
+            <span>Ventas estimadas en ${horizonDays} días:</span>
+            <span>${demand} unidades</span>
           </div>
 
-          <div style="font-size: 0.8rem; font-weight: 600; color: var(--text-muted); margin-bottom: 0.25rem;">Curva de Demanda Diaria:</div>
-          <div class="chart-container">
-            ${chartBars}
+          <div class="prediction-stat">
+            <span>Stock disponible en bodega:</span>
+            <span>${stockActual} unidades</span>
           </div>
+
+          <div class="prediction-stat">
+            <span>Rango estimado (Pesimista - Optimista):</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">${fc.intervalo_confianza?.p10 || 0} - ${fc.intervalo_confianza?.p90 || 0} uds</span>
+          </div>
+
+          ${deficit > 0 ? `
+            <div class="recommendation-alert alert-buy">
+              <span>Sugerencia: Pedir al proveedor</span>
+              <strong>+${deficit} unidades</strong>
+            </div>
+          ` : `
+            <div class="recommendation-alert alert-ok">
+              <span>Inventario suficiente</span>
+              <strong>Sin compras urgentes</strong>
+            </div>
+          `}
         </div>
       `;
     }).join('');
 
+    container.innerHTML = cardsHtml;
+
+    document.getElementById('kpiTotalDemandForecast').textContent = `${totalDemand.toLocaleString()} uds`;
+    document.getElementById('kpiForecastRiskCount').textContent = riskCount;
+    document.getElementById('kpiForecastSafeCount').textContent = safeCount;
+
   } catch (err) {
-    container.innerHTML = `<p style="color: var(--accent-rose);">Error al cargar pronósticos: ${err.message}</p>`;
+    container.innerHTML = `<p style="color: var(--danger); padding: 2rem;">Error al cargar predicciones: ${err.message}</p>`;
   }
 }
 
 async function handleTrainML() {
   const btn = document.getElementById('btnTrainML');
   btn.disabled = true;
-  btn.textContent = '⏳ Entrenando en Atlas...';
+  btn.textContent = 'Actualizando...';
 
   try {
-    const res = await api.triggerTrainML();
-    showToast('Reentrenamiento completado con éxito', 'success');
+    await api.triggerTrainML();
+    showToast('Modelo de predicción actualizado con éxito', 'success');
     loadForecasts();
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '🔄 Reentrenar Modelo (RF06)';
+    btn.textContent = 'Actualizar Modelo';
   }
 }
 
 // -----------------------------------------------------------------------------
-// PANEL 3: OPTIMIZACIÓN KNAPSACK (RF04)
+// VENTANA 3: PLAN DE COMPRAS CON PRESUPUESTO
 // -----------------------------------------------------------------------------
 async function loadBudgetCycles() {
   const select = document.getElementById('optSelectCycle');
@@ -346,7 +357,7 @@ async function loadBudgetCycles() {
     const cycles = res.items || [];
 
     if (cycles.length === 0) {
-      select.innerHTML = '<option value="">No hay ciclos disponibles</option>';
+      select.innerHTML = '<option value="">No hay ciclos presupuestales</option>';
       return;
     }
 
@@ -366,13 +377,13 @@ async function handleRunOptimization() {
   const days = parseInt(document.getElementById('optInputDays').value, 10) || 14;
 
   if (!cycleId) {
-    showToast('Selecciona un ciclo presupuestal activo', 'error');
+    showToast('Selecciona un ciclo presupuestal', 'error');
     return;
   }
 
   const btn = document.getElementById('btnRunOptimization');
   btn.disabled = true;
-  btn.textContent = '⏳ Resolviendo MILP...';
+  btn.textContent = 'Calculando...';
 
   try {
     const res = await api.runOptimization({
@@ -386,138 +397,127 @@ async function handleRunOptimization() {
     const s = res.sesion;
     lastOptimizationSessionId = s._id;
 
-    // Mostrar métricas del resultado
-    document.getElementById('optResStatus').textContent = s.solver_status;
-    document.getElementById('optResTime').textContent = `Tiempo: ${s.tiempo_ejecucion_ms} ms (< 30s RNF01)`;
+    // Métricas de resultado
     document.getElementById('optResSpent').textContent = `$${s.presupuesto_total_asignado.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-    document.getElementById('optResRemaining').textContent = `Remanente: $${s.presupuesto_remanente.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    document.getElementById('optResRemaining').textContent = `Presupuesto sobrante: $${s.presupuesto_remanente.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
     document.getElementById('optResCoverage').textContent = `${s.demanda_total_cubierta_porcentaje}%`;
-    document.getElementById('optResSkusCount').textContent = `${s.skus_seleccionados_conteo} SKUs seleccionados`;
+    document.getElementById('optResCount').textContent = s.skus_seleccionados_conteo;
 
-    // Renderizar tabla de recomendaciones
+    // Tabla de compras sugeridas
     const tbody = document.getElementById('optItemsTableBody');
     const items = s.items_recomendados || [];
 
     tbody.innerHTML = items.map(item => `
       <tr>
-        <td><code style="color: #818cf8; font-weight: 700;">${item.sku_code}</code></td>
-        <td style="font-weight: 600;">${item.nombre_producto}</td>
-        <td><span class="badge badge-blue">${item.proveedor_nombre}</span></td>
-        <td>${item.demanda_proyectada}</td>
-        <td>${item.stock_actual}</td>
-        <td style="color: #fbbf24; font-weight: 700;">${item.deficit_unidades}</td>
-        <td><span class="badge badge-green" style="font-size: 0.9rem;">${item.cantidad_sugerida_ml} uds</span></td>
+        <td><code style="font-family: var(--font-mono); color: #93c5fd;">${item.sku_code}</code></td>
+        <td style="font-weight: 500;">${item.nombre_producto}</td>
+        <td><span class="badge badge-neutral">${item.proveedor_nombre}</span></td>
+        <td>${item.demanda_proyectada} uds</td>
+        <td>${item.stock_actual} uds</td>
+        <td style="color: var(--warning); font-weight: 600;">${item.deficit_unidades} uds</td>
+        <td><strong>${item.cantidad_sugerida_ml} uds</strong></td>
         <td>$${item.costo_unitario.toFixed(2)}</td>
-        <td style="font-weight: 800; color: #ffffff;">$${item.subtotal.toFixed(2)}</td>
-        <td><span class="badge badge-green">${item.cobertura_deficit_porcentaje}%</span></td>
+        <td style="font-weight: 700; color: #ffffff;">$${item.subtotal.toFixed(2)}</td>
       </tr>
     `).join('');
 
-    document.getElementById('optimizationResultWrapper').style.display = 'block';
-    showToast(`Optimización ${s.solver_status} completada en ${s.tiempo_ejecucion_ms} ms`, 'success');
+    document.getElementById('optimizationResultsBlock').style.display = 'block';
+    showToast('Plan de compras calculado con éxito', 'success');
 
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '⚡ Resolver Knapsack';
+    btn.textContent = 'Calcular Compras Óptimas';
   }
 }
 
-async function handleGenerateOrdersFromOpt() {
+async function handleGenerateOrders() {
   if (!lastOptimizationSessionId) {
-    showToast('No hay una sesión de optimización activa.', 'error');
+    showToast('Primero debes calcular un plan de compras', 'error');
     return;
   }
 
-  const btn = document.getElementById('btnGenerateOrdersFromOpt');
+  const btn = document.getElementById('btnGenerateOrders');
   btn.disabled = true;
-  btn.textContent = '⏳ Generando órdenes...';
+  btn.textContent = 'Generando órdenes...';
 
   try {
     const res = await api.generateOrdersFromSession(lastOptimizationSessionId);
     showToast(res.message, 'success');
 
-    // Cambiar a la pestaña de órdenes
+    // Cambiar automáticamente a la ventana de órdenes
     document.querySelector('[data-tab="tab-orders"]').click();
   } catch (err) {
     showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '📄 Generar Órdenes de Compra Propuestas (RF05)';
+    btn.textContent = 'Generar Órdenes de Compra';
   }
 }
 
 // -----------------------------------------------------------------------------
-// PANEL 4: ÓRDENES DE COMPRA (RF05)
+// VENTANA 4: ÓRDENES DE COMPRA
 // -----------------------------------------------------------------------------
 async function loadOrders() {
-  const container = document.getElementById('ordersListContainer');
+  const container = document.getElementById('ordersContainer');
   const filter = document.getElementById('filterOrderStatus').value;
-  container.innerHTML = '<p style="color: var(--text-dim);">Cargando órdenes de compra...</p>';
+  container.innerHTML = '<p style="color: var(--text-dim); padding: 2rem;">Cargando órdenes...</p>';
 
   try {
     const res = await api.getOrders(filter);
     const orders = res.items || [];
 
     if (orders.length === 0) {
-      container.innerHTML = '<p style="color: var(--text-dim); text-align: center; padding: 2rem;">No se encontraron órdenes de compra para el filtro seleccionado.</p>';
+      container.innerHTML = '<p style="color: var(--text-dim); padding: 2rem; text-align: center;">No hay órdenes de compra registradas para este filtro.</p>';
       return;
     }
 
     container.innerHTML = orders.map(ord => {
       const isDraft = ord.estado === 'BORRADOR_PROPUESTA';
       const isApproved = ord.estado === 'APROBADA';
-      const isReceived = ord.estado === 'RECIBIDA_TOTAL';
 
-      const badgeClass = isDraft ? 'badge-yellow' : isApproved ? 'badge-green' : isReceived ? 'badge-blue' : 'badge-red';
-      const dateStr = new Date(ord.fecha_generacion).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' });
-      const etaStr = ord.fecha_entrega_estimada ? new Date(ord.fecha_entrega_estimada).toLocaleDateString('es-ES', { year: 'numeric', month: 'short', day: 'numeric' }) : 'N/A';
+      const badgeClass = isDraft ? 'badge-warning' : isApproved ? 'badge-success' : 'badge-neutral';
+      const statusLabel = isDraft ? 'Borrador pendiente' : isApproved ? 'Aprobada' : ord.estado;
 
-      const itemsRows = (ord.items || []).map((it, idx) => `
+      const dateStr = new Date(ord.fecha_generacion).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+      const etaStr = ord.fecha_entrega_estimada ? new Date(ord.fecha_entrega_estimada).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+
+      const itemsRows = (ord.items || []).map(it => `
         <tr>
-          <td><code style="color: #818cf8; font-weight: 700;">${it.sku_code}</code></td>
+          <td><code style="font-family: var(--font-mono); color: #93c5fd;">${it.sku_code}</code></td>
           <td>${it.nombre_producto}</td>
-          <td>${it.cantidad_sugerida_ml} uds</td>
-          <td>
-            ${isDraft 
-              ? `<input type="number" class="form-input ord-item-qty" data-sku="${it.sku_code}" value="${it.cantidad_final_aprobada}" min="0" style="width: 90px; padding: 0.3rem 0.5rem; text-align: center;">`
-              : `<span style="font-weight: 700; color: #ffffff;">${it.cantidad_final_aprobada} uds</span>`
-            }
-          </td>
+          <td><strong>${it.cantidad_sugerida_ml} uds</strong></td>
           <td>$${it.costo_unitario?.toFixed(2)}</td>
-          <td style="font-weight: 700; color: #ffffff;">$${it.subtotal?.toFixed(2)}</td>
+          <td style="font-weight: 700;">$${it.subtotal?.toFixed(2)}</td>
         </tr>
       `).join('');
 
       return `
-        <div class="metric-card" style="padding: 1.5rem;" id="card-${ord._id}">
-          <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 1rem; border-bottom: 1px solid var(--border-subtle); padding-bottom: 1rem;">
+        <div class="table-card" style="padding: 1.25rem;" id="order-${ord._id}">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">
             <div>
-              <div style="display: flex; align-items: center; gap: 0.75rem;">
-                <h3 style="font-size: 1.25rem; font-weight: 800; font-family: var(--font-mono); color: #ffffff;">${ord.codigo_orden}</h3>
-                <span class="badge ${badgeClass}">${ord.estado}</span>
-              </div>
-              <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
-                Emisión: <strong>${dateStr}</strong> | Entrega Estimada: <strong>${etaStr}</strong>
+              <span style="font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: #ffffff;">${ord.codigo_orden}</span>
+              <span class="badge ${badgeClass}" style="margin-left: 0.5rem;">${statusLabel}</span>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
+                Fecha: ${dateStr} | Llegada estimada: <strong>${etaStr}</strong>
               </div>
             </div>
 
             <div style="text-align: right;">
-              <div style="font-size: 0.75rem; color: var(--text-muted);">MONTO TOTAL</div>
-              <div style="font-size: 1.5rem; font-weight: 800; color: #ffffff;">$${ord.costo_total_orden?.toFixed(2)}</div>
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Total Orden</div>
+              <div style="font-size: 1.3rem; font-weight: 700; color: #ffffff;">$${ord.costo_total_orden?.toFixed(2)} USD</div>
             </div>
           </div>
 
-          <div class="table-responsive" style="margin-bottom: 1.25rem;">
+          <div class="table-wrapper" style="margin-bottom: 1rem;">
             <table>
               <thead>
                 <tr>
-                  <th>SKU</th>
+                  <th>Código</th>
                   <th>Producto</th>
-                  <th>Sugerido ML</th>
-                  <th>Cantidad Final</th>
-                  <th>Costo Unit.</th>
+                  <th>Cantidad Pedida</th>
+                  <th>Costo Unitario</th>
                   <th>Subtotal</th>
                 </tr>
               </thead>
@@ -528,29 +528,22 @@ async function loadOrders() {
           </div>
 
           ${isDraft ? `
-            <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-              <button class="btn btn-secondary btn-sm btn-save-qty" data-id="${ord._id}">💾 Guardar Cantidades</button>
-              <button class="btn btn-danger btn-sm btn-cancel-order" data-id="${ord._id}">Cancelar</button>
-              <button class="btn btn-success btn-sm btn-approve-order" data-id="${ord._id}">✅ Aprobar Orden</button>
-            </div>
-          ` : ''}
-
-          ${isApproved ? `
-            <div style="font-size: 0.8rem; color: var(--accent-emerald); text-align: right;">
-              ✓ Orden formalmente aprobada y lista para despacho con el proveedor.
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+              <button class="btn btn-danger btn-sm btn-cancel-ord" data-id="${ord._id}">Cancelar</button>
+              <button class="btn btn-success btn-sm btn-approve-ord" data-id="${ord._id}">Aprobar Orden</button>
             </div>
           ` : ''}
         </div>
       `;
     }).join('');
 
-    // Asignar listeners a botones de órdenes
-    container.querySelectorAll('.btn-approve-order').forEach(btn => {
+    // Listeners de aprobación y cancelación
+    container.querySelectorAll('.btn-approve-ord').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
         try {
           await api.approveOrder(id);
-          showToast('Orden aprobada exitosamente', 'success');
+          showToast('Orden aprobada correctamente', 'success');
           loadOrders();
         } catch (err) {
           showToast(err.message, 'error');
@@ -558,10 +551,10 @@ async function loadOrders() {
       });
     });
 
-    container.querySelectorAll('.btn-cancel-order').forEach(btn => {
+    container.querySelectorAll('.btn-cancel-ord').forEach(btn => {
       btn.addEventListener('click', async () => {
         const id = btn.dataset.id;
-        if (!confirm('¿Estás seguro de cancelar esta orden? Se liberará el presupuesto comprometido.')) return;
+        if (!confirm('¿Deseas cancelar esta orden? El presupuesto volverá a estar disponible.')) return;
         try {
           await api.cancelOrder(id);
           showToast('Orden cancelada y presupuesto liberado', 'info');
@@ -572,30 +565,7 @@ async function loadOrders() {
       });
     });
 
-    container.querySelectorAll('.btn-save-qty').forEach(btn => {
-      btn.addEventListener('click', async () => {
-        const id = btn.dataset.id;
-        const card = document.getElementById(`card-${id}`);
-        const inputs = card.querySelectorAll('.ord-item-qty');
-        const adjustments = [];
-        inputs.forEach(input => {
-          adjustments.push({
-            sku_code: input.dataset.sku,
-            cantidad_final_aprobada: parseInt(input.value, 10) || 0
-          });
-        });
-
-        try {
-          const res = await api.adjustOrderItems(id, adjustments);
-          showToast(res.message, 'success');
-          loadOrders();
-        } catch (err) {
-          showToast(err.message, 'error');
-        }
-      });
-    });
-
   } catch (err) {
-    container.innerHTML = `<p style="color: var(--accent-rose);">Error al cargar órdenes: ${err.message}</p>`;
+    container.innerHTML = `<p style="color: var(--danger); padding: 2rem;">Error al cargar órdenes: ${err.message}</p>`;
   }
 }
