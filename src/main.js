@@ -1,18 +1,17 @@
 import { api } from './api.js';
 
-// Estado global de la aplicación
 let activeProducts = [];
 let activeProjections = [];
-let lastOptimizationResult = null;
-let activeCycleId = null;
+let lastOptimizationSessionId = null;
 
-// Inicialización de la Aplicación
+// Inicialización de la aplicación
 document.addEventListener('DOMContentLoaded', async () => {
+  initTabs();
   initModals();
   await checkServerHealth();
   updateUserUI();
 
-  // Si no está autenticado, intentar auto-login con demo para que funcione inmediatamente
+  // Si no hay sesión, auto-login con credenciales demo para mostrar los datos de inmediato
   if (!api.isAuthenticated()) {
     try {
       await api.login('admin@saaml.com', 'Admin123*');
@@ -20,34 +19,63 @@ document.addEventListener('DOMContentLoaded', async () => {
     } catch (_) {}
   }
 
-  // Cargar datos iniciales
-  await loadDashboardData();
+  // Cargar pestaña inicial (Inventario)
+  await loadInventory();
 
   // Escuchadores de eventos
-  document.getElementById('selectHorizon').addEventListener('change', () => loadDashboardData());
-  document.getElementById('btnRunPredictionAndPlan').addEventListener('click', handleRunPlan);
+  document.getElementById('btnRefreshCatalog').addEventListener('click', loadInventory);
+  document.getElementById('selectHorizon').addEventListener('change', () => loadForecasts());
+  document.getElementById('btnTrainML').addEventListener('click', handleTrainML);
+  document.getElementById('btnRunOptimization').addEventListener('click', handleRunOptimization);
+  document.getElementById('btnGenerateOrders').addEventListener('click', handleGenerateOrders);
+  document.getElementById('filterOrderStatus').addEventListener('change', () => loadOrders());
+  document.getElementById('btnRefreshOrders').addEventListener('click', loadOrders);
 });
 
 // -----------------------------------------------------------------------------
-// NOTIFICACIONES TOAST
+// NAVEGACIÓN POR VENTANAS / PESTAÑAS
+// -----------------------------------------------------------------------------
+function initTabs() {
+  const tabButtons = document.querySelectorAll('.tab-btn');
+  tabButtons.forEach(btn => {
+    btn.addEventListener('click', () => {
+      tabButtons.forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+
+      const targetId = btn.dataset.tab;
+      document.querySelectorAll('.tab-view').forEach(view => view.classList.remove('active'));
+      const targetView = document.getElementById(targetId);
+      if (targetView) {
+        targetView.classList.add('active');
+      }
+
+      // Cargar datos según pestaña
+      if (targetId === 'tab-inventory') loadInventory();
+      if (targetId === 'tab-forecast') loadForecasts();
+      if (targetId === 'tab-budget-plan') loadBudgetCycles();
+      if (targetId === 'tab-orders') loadOrders();
+    });
+  });
+}
+
+// -----------------------------------------------------------------------------
+// NOTIFICACIONES
 // -----------------------------------------------------------------------------
 function showToast(message, type = 'info') {
   const container = document.getElementById('toastContainer');
   const toast = document.createElement('div');
   toast.className = `toast ${type}`;
-
-  const icon = type === 'success' ? '✅' : type === 'error' ? '❌' : 'ℹ️';
-  toast.innerHTML = `<span>${icon}</span> <span>${message}</span>`;
+  toast.textContent = message;
   container.appendChild(toast);
 
   setTimeout(() => {
     toast.style.opacity = '0';
-    setTimeout(() => toast.remove(), 300);
-  }, 4000);
+    setTimeout(() => toast.remove(), 250);
+  }, 3500);
 }
 
 // -----------------------------------------------------------------------------
-// SALUD DEL SERVIDOR & CONFIGURACIÓN
+// SALUD DEL SERVIDOR Y CONEXIÓN
 // -----------------------------------------------------------------------------
 async function checkServerHealth() {
   const dot = document.getElementById('statusDot');
@@ -64,22 +92,23 @@ async function checkServerHealth() {
   try {
     const health = await api.getHealth();
     if (health.status === 'OK' && health.database?.connected) {
-      dot.className = 'status-dot connected';
-      text.textContent = '🟢 Sistema en línea (Atlas Conectado)';
+      dot.className = 'status-dot online';
+      text.textContent = 'En línea';
     } else {
-      dot.className = 'status-dot disconnected';
-      text.textContent = 'API OK (Base de datos sin conexión)';
+      dot.className = 'status-dot offline';
+      text.textContent = 'Sin base de datos';
     }
-  } catch (err) {
-    dot.className = 'status-dot disconnected';
-    text.textContent = '🔴 Servidor desconectado';
+  } catch (_) {
+    dot.className = 'status-dot offline';
+    text.textContent = 'Desconectado';
   }
 }
 
 // -----------------------------------------------------------------------------
-// GESTIÓN DE SESIÓN Y MODALES
+// MODALES Y AUTENTICACIÓN
 // -----------------------------------------------------------------------------
 function initModals() {
+  // Modal Login
   const loginModal = document.getElementById('loginModal');
   document.getElementById('btnOpenLogin')?.addEventListener('click', () => loginModal.classList.add('active'));
   document.getElementById('btnCloseLogin')?.addEventListener('click', () => loginModal.classList.remove('active'));
@@ -101,8 +130,8 @@ function initModals() {
       await api.login(email, pass);
       loginModal.classList.remove('active');
       updateUserUI();
-      showToast('Sesión iniciada con éxito', 'success');
-      loadDashboardData();
+      showToast('Sesión iniciada correctamente', 'success');
+      loadInventory();
     } catch (err) {
       showToast(err.message, 'error');
     }
@@ -128,19 +157,19 @@ function initModals() {
     api.setBaseUrl(newUrl);
     configModal.classList.remove('active');
     await checkServerHealth();
-    showToast(`Conectado a: ${newUrl}`, 'info');
-    loadDashboardData();
+    showToast(`Conectado a ${newUrl}`, 'info');
+    loadInventory();
   });
 }
 
 function updateUserUI() {
   const container = document.getElementById('userContainer');
   if (api.isAuthenticated()) {
-    const user = api.getUser() || { email: 'Admin', rol: 'ADMIN' };
+    const user = api.getUser() || { email: 'Admin' };
     container.innerHTML = `
-      <div style="display: flex; align-items: center; gap: 0.6rem;">
-        <span style="font-size: 0.85rem; font-weight: 700; color: #ffffff;">👤 ${user.nombre_completo || user.email}</span>
-        <button class="btn btn-secondary btn-sm" id="btnLogout" title="Salir">Salir</button>
+      <div style="display: flex; align-items: center; gap: 0.5rem;">
+        <span style="font-size: 0.8rem; color: #ffffff;">${user.email}</span>
+        <button class="btn btn-secondary btn-sm" id="btnLogout">Salir</button>
       </div>
     `;
     document.getElementById('btnLogout').addEventListener('click', () => {
@@ -150,7 +179,7 @@ function updateUserUI() {
     });
   } else {
     container.innerHTML = `
-      <button class="btn btn-primary btn-sm" id="btnOpenLogin">👤 Ingresar</button>
+      <button class="btn btn-primary btn-sm" id="btnOpenLogin">Iniciar Sesión</button>
     `;
     document.getElementById('btnOpenLogin').addEventListener('click', () => {
       document.getElementById('loginModal').classList.add('active');
@@ -159,305 +188,384 @@ function updateUserUI() {
 }
 
 // -----------------------------------------------------------------------------
-// CARGA Y CÁLCULO PRINCIPAL DEL DASHBOARD
+// VENTANA 1: INVENTARIO DE PRODUCTOS
 // -----------------------------------------------------------------------------
-async function loadDashboardData() {
-  const grid = document.getElementById('productsGrid');
-  grid.innerHTML = `
-    <div class="loading-state">
-      <div class="spinner"></div>
-      <p>Consultando catálogo e inferencia de Machine Learning...</p>
-    </div>
-  `;
-
-  const horizonDays = parseInt(document.getElementById('selectHorizon').value, 10) || 14;
-  document.getElementById('kpiDemandHorizon').textContent = `En los próximos ${horizonDays} días`;
+async function loadInventory() {
+  const tbody = document.getElementById('inventoryTableBody');
+  tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 2rem;">Cargando inventario...</td></tr>`;
 
   try {
-    // 1. Obtener catálogo y ciclos presupuestales en paralelo
-    const [prodRes, cycleRes] = await Promise.all([
-      api.getProducts(),
-      api.getBudgetCycles()
-    ]);
+    const res = await api.getProducts();
+    activeProducts = res.items || [];
 
-    activeProducts = prodRes.items || [];
-    const cycles = cycleRes.items || [];
-    if (cycles.length > 0) {
-      activeCycleId = cycles[0]._id;
-    }
+    // KPIs
+    document.getElementById('kpiTotalSkus').textContent = activeProducts.length;
+
+    let totalVal = 0;
+    let lowCount = 0;
+
+    activeProducts.forEach(p => {
+      totalVal += (p.stock_actual || 0) * (p.costo_unitario || 0);
+      if ((p.stock_actual || 0) < (p.stock_seguridad || 0)) {
+        lowCount++;
+      }
+    });
+
+    document.getElementById('kpiStockValue').textContent = `$${totalVal.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    document.getElementById('kpiLowStock').textContent = lowCount;
 
     if (activeProducts.length === 0) {
-      grid.innerHTML = `<p style="text-align: center; color: var(--text-dim); grid-column: 1/-1;">No hay productos registrados en el catálogo.</p>`;
+      tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 2rem;">No hay productos registrados.</td></tr>`;
       return;
     }
 
-    // 2. Obtener pronósticos de ML para el horizonte seleccionado
-    const forecastRes = await api.getForecastAll(horizonDays);
-    activeProjections = forecastRes.proyecciones || [];
-
-    // Mapear proyecciones por SKU
-    const projectionMap = {};
-    activeProjections.forEach(p => {
-      projectionMap[p.sku_code] = p;
-    });
-
-    // 3. Calcular métricas y construir tarjetas visuales
-    let totalDemandUnits = 0;
-    let riskCount = 0;
-    let totalRecommendedCost = 0;
-
-    const cardsHtml = activeProducts.map(prod => {
-      const fc = projectionMap[prod.sku_code] || { demanda_total_proyectada: 0 };
-      const expectedDemand = Math.round(fc.demanda_total_proyectada || 0);
-      totalDemandUnits += expectedDemand;
-
-      const stockActual = prod.stock_actual || 0;
-      const stockSeguridad = prod.stock_seguridad || 0;
-
-      // Cálculo del déficit neto
-      const deficit = Math.max(0, expectedDemand + stockSeguridad - stockActual);
-      const isRisk = deficit > 0;
-
-      if (isRisk) {
-        riskCount++;
-      }
-
-      // Cálculo de compra ajustada a lotes y MOQ
-      const lote = prod.incremento_lote || 1;
-      const moq = prod.moq || 1;
-      let unitsToOrder = 0;
-      let orderCost = 0;
-
-      if (deficit > 0) {
-        const minUnits = Math.max(moq, lote);
-        const batches = Math.max(Math.ceil(minUnits / lote), Math.ceil(deficit / lote));
-        unitsToOrder = batches * lote;
-        orderCost = unitsToOrder * (prod.costo_unitario || 0);
-        totalRecommendedCost += orderCost;
-      }
-
-      // Porcentaje de cobertura de stock
-      const stockCoveragePct = expectedDemand > 0 ? Math.min(100, Math.round((stockActual / expectedDemand) * 100)) : 100;
-
-      // Estimación de días de stock restantes
-      const dailySalesRate = expectedDemand / horizonDays;
-      const daysOfStockLeft = dailySalesRate > 0 ? Math.max(0, Math.round(stockActual / dailySalesRate)) : 99;
-
-      const alertText = isRisk
-        ? `⚠️ Se agotará en aprox. ${daysOfStockLeft} días si no se compra`
-        : `✅ Inventario suficiente para cubrir los ${horizonDays} días`;
-
-      const alertClass = isRisk ? 'risk' : 'safe';
-      const cardClass = isRisk ? 'risk' : 'safe';
+    tbody.innerHTML = activeProducts.map(p => {
+      const isLow = (p.stock_actual || 0) < (p.stock_seguridad || 0);
+      const statusBadge = isLow
+        ? `<span class="badge badge-danger">Stock Bajo</span>`
+        : `<span class="badge badge-success">Normal</span>`;
 
       return `
-        <div class="product-card ${cardClass}">
-          <div>
-            <div class="product-card-header">
-              <div>
-                <span class="product-sku">${prod.sku_code}</span>
-                <h3 class="product-name">${prod.nombre}</h3>
-                <span class="product-category">${prod.categoria}</span>
-              </div>
-              <div style="text-align: right;">
-                <div style="font-size: 0.75rem; color: var(--text-muted);">PRECIO VENTA</div>
-                <div style="font-size: 1.1rem; font-weight: 800; color: #ffffff;">$${prod.precio_venta.toFixed(2)}</div>
-              </div>
+        <tr>
+          <td><code style="font-family: var(--font-mono); color: #93c5fd;">${p.sku_code}</code></td>
+          <td style="font-weight: 500;">${p.nombre}</td>
+          <td><span class="badge badge-neutral">${p.categoria}</span></td>
+          <td><strong>${p.stock_actual}</strong></td>
+          <td style="color: var(--text-muted);">${p.stock_seguridad}</td>
+          <td>$${p.costo_unitario.toFixed(2)}</td>
+          <td>$${p.precio_venta.toFixed(2)}</td>
+          <td>${statusBadge}</td>
+        </tr>
+      `;
+    }).join('');
+
+  } catch (err) {
+    tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--danger); padding: 2rem;">Error al conectar con el backend: ${err.message}</td></tr>`;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// VENTANA 2: PREDICCIÓN DE VENTAS (DEMANDA)
+// -----------------------------------------------------------------------------
+async function loadForecasts() {
+  const horizonDays = parseInt(document.getElementById('selectHorizon').value, 10) || 14;
+  const container = document.getElementById('forecastCardsContainer');
+  document.getElementById('kpiForecastDaysSubtitle').textContent = `En los próximos ${horizonDays} días`;
+  container.innerHTML = `<p style="color: var(--text-dim); padding: 2rem;">Calculando predicciones...</p>`;
+
+  try {
+    const res = await api.getForecastAll(horizonDays);
+    activeProjections = res.proyecciones || [];
+
+    let totalDemand = 0;
+    let riskCount = 0;
+    let safeCount = 0;
+
+    const cardsHtml = activeProjections.map(fc => {
+      const demand = Math.round(fc.demanda_total_proyectada || 0);
+      totalDemand += demand;
+
+      const stockActual = fc.stock_actual || 0;
+      const deficit = Math.max(0, demand - stockActual);
+
+      if (deficit > 0) {
+        riskCount++;
+      } else {
+        safeCount++;
+      }
+
+      const alertClass = deficit > 0 ? 'badge-warning' : 'badge-success';
+      const alertText = deficit > 0 ? `Faltan ~${deficit} unidades` : 'Stock suficiente';
+
+      return `
+        <div class="item-card">
+          <div class="item-card-header">
+            <div>
+              <div class="item-title">${fc.nombre}</div>
+              <div class="item-sku">${fc.sku_code}</div>
             </div>
-
-            <!-- Caja Principal de Predicción -->
-            <div class="prediction-box">
-              <div class="prediction-highlight">
-                <span class="prediction-title">Ventas Esperadas (IA):</span>
-                <span class="prediction-number">${expectedDemand} uds</span>
-              </div>
-
-              <div class="stock-meter">
-                <span>Stock Actual: <strong>${stockActual} uds</strong></span>
-                <span>Cobertura: <strong>${stockCoveragePct}%</strong></span>
-              </div>
-
-              <div class="meter-bar">
-                <div class="meter-fill ${alertClass}" style="width: ${stockCoveragePct}%;"></div>
-              </div>
-
-              <div class="status-alert ${alertClass}">
-                ${alertText}
-              </div>
-            </div>
+            <span class="badge ${alertClass}">${alertText}</span>
           </div>
 
-          <!-- Recomendación de Compra Clara -->
-          <div class="purchase-recommendation">
-            <div class="recommendation-title">Sugerencia Automática de Compra:</div>
-            ${isRisk ? `
-              <div class="recommendation-action">
-                👉 Comprar <strong>${unitsToOrder} unidades</strong>
-              </div>
-              <div class="recommendation-cost">
-                Inversión estimada: <strong>$${orderCost.toLocaleString('en-US', { minimumFractionDigits: 2 })} USD</strong> (en paquetes de ${lote} uds)
-              </div>
-            ` : `
-              <div class="recommendation-action" style="color: var(--success);">
-                ✓ No requiere compra en este ciclo
-              </div>
-              <div class="recommendation-cost">
-                El inventario actual cubre la demanda esperada sin riesgo.
-              </div>
-            `}
+          <div class="prediction-stat">
+            <span>Ventas estimadas en ${horizonDays} días:</span>
+            <span>${demand} unidades</span>
           </div>
+
+          <div class="prediction-stat">
+            <span>Stock disponible en bodega:</span>
+            <span>${stockActual} unidades</span>
+          </div>
+
+          <div class="prediction-stat">
+            <span>Rango estimado (Pesimista - Optimista):</span>
+            <span style="font-size: 0.8rem; color: var(--text-muted);">${fc.intervalo_confianza?.p10 || 0} - ${fc.intervalo_confianza?.p90 || 0} uds</span>
+          </div>
+
+          ${deficit > 0 ? `
+            <div class="recommendation-alert alert-buy">
+              <span>Sugerencia: Pedir al proveedor</span>
+              <strong>+${deficit} unidades</strong>
+            </div>
+          ` : `
+            <div class="recommendation-alert alert-ok">
+              <span>Inventario suficiente</span>
+              <strong>Sin compras urgentes</strong>
+            </div>
+          `}
         </div>
       `;
     }).join('');
 
-    grid.innerHTML = cardsHtml;
+    container.innerHTML = cardsHtml;
 
-    // Actualizar Resumen Ejecutivo
-    document.getElementById('kpiTotalDemand').textContent = `${totalDemandUnits.toLocaleString()} uds`;
-    document.getElementById('kpiRiskCount').textContent = `${riskCount} de ${activeProducts.length}`;
-    document.getElementById('kpiRecommendedBudget').textContent = `$${totalRecommendedCost.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
-
-    const userBudget = parseFloat(document.getElementById('inputBudget').value) || 15000;
-    if (totalRecommendedCost <= userBudget) {
-      document.getElementById('kpiBudgetStatus').textContent = `Totalmente viable (Te sobran $${(userBudget - totalRecommendedCost).toLocaleString('en-US')})`;
-      document.getElementById('kpiBudgetStatus').style.color = 'var(--success)';
-    } else {
-      document.getElementById('kpiBudgetStatus').textContent = `Supera el presupuesto (Faltan $${(totalRecommendedCost - userBudget).toLocaleString('en-US')})`;
-      document.getElementById('kpiBudgetStatus').style.color = 'var(--warning)';
-    }
+    document.getElementById('kpiTotalDemandForecast').textContent = `${totalDemand.toLocaleString()} uds`;
+    document.getElementById('kpiForecastRiskCount').textContent = riskCount;
+    document.getElementById('kpiForecastSafeCount').textContent = safeCount;
 
   } catch (err) {
-    grid.innerHTML = `<p style="text-align: center; color: var(--danger); grid-column: 1/-1;">Error al consultar datos: ${err.message}. Asegúrate de que el backend esté corriendo en localhost:8000.</p>`;
+    container.innerHTML = `<p style="color: var(--danger); padding: 2rem;">Error al cargar predicciones: ${err.message}</p>`;
+  }
+}
+
+async function handleTrainML() {
+  const btn = document.getElementById('btnTrainML');
+  btn.disabled = true;
+  btn.textContent = 'Actualizando...';
+
+  try {
+    await api.triggerTrainML();
+    showToast('Modelo de predicción actualizado con éxito', 'success');
+    loadForecasts();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Actualizar Modelo';
   }
 }
 
 // -----------------------------------------------------------------------------
-// BOTÓN: CALCULAR Y OPTIMIZAR PLAN DE COMPRAS
+// VENTANA 3: PLAN DE COMPRAS CON PRESUPUESTO
 // -----------------------------------------------------------------------------
-async function handleRunPlan() {
-  const btn = document.getElementById('btnRunPredictionAndPlan');
-  const userBudget = parseFloat(document.getElementById('inputBudget').value) || 15000;
-  const horizonDays = parseInt(document.getElementById('selectHorizon').value, 10) || 14;
+async function loadBudgetCycles() {
+  const select = document.getElementById('optSelectCycle');
+  select.innerHTML = '<option value="">Cargando ciclos...</option>';
 
-  if (!activeCycleId) {
-    showToast('No se encontró un ciclo presupuestal activo en el backend.', 'error');
+  try {
+    const res = await api.getBudgetCycles();
+    const cycles = res.items || [];
+
+    if (cycles.length === 0) {
+      select.innerHTML = '<option value="">No hay ciclos presupuestales</option>';
+      return;
+    }
+
+    select.innerHTML = cycles.map(c => {
+      const libre = c.presupuesto_total_asignado - (c.presupuesto_comprometido || 0);
+      return `<option value="${c._id}">${c.codigo_ciclo} (${c.periodo}) - Saldo: $${libre.toLocaleString('en-US')}</option>`;
+    }).join('');
+
+  } catch (err) {
+    select.innerHTML = `<option value="">Error: ${err.message}</option>`;
+  }
+}
+
+async function handleRunOptimization() {
+  const cycleId = document.getElementById('optSelectCycle').value;
+  const budget = parseFloat(document.getElementById('optInputBudget').value) || 15000;
+  const days = parseInt(document.getElementById('optInputDays').value, 10) || 14;
+
+  if (!cycleId) {
+    showToast('Selecciona un ciclo presupuestal', 'error');
     return;
   }
 
+  const btn = document.getElementById('btnRunOptimization');
   btn.disabled = true;
-  btn.textContent = '⏳ Optimizando compras con presupuesto...';
+  btn.textContent = 'Calculando...';
 
   try {
-    // 1. Ejecutar el optimizador en el backend
-    const optRes = await api.runOptimization({
-      ciclo_presupuestal_id: activeCycleId,
-      presupuesto_limite: userBudget,
-      horizon_days: horizonDays,
+    const res = await api.runOptimization({
+      ciclo_presupuestal_id: cycleId,
+      presupuesto_limite: budget,
+      horizon_days: days,
       considerar_volumen_almacen: true,
       factor_seguridad: 1.0
     });
 
-    lastOptimizationResult = optRes.sesion;
-    showToast(`¡Plan optimizado! ${lastOptimizationResult.skus_seleccionados_conteo} productos seleccionados en ${lastOptimizationResult.tiempo_ejecucion_ms} ms`, 'success');
+    const s = res.sesion;
+    lastOptimizationSessionId = s._id;
 
-    // 2. Generar automáticamente las órdenes de compra propuestas
-    const orderRes = await api.generateOrdersFromSession(lastOptimizationResult._id);
-    showToast('Órdenes de compra generadas por proveedor.', 'success');
+    // Métricas de resultado
+    document.getElementById('optResSpent').textContent = `$${s.presupuesto_total_asignado.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    document.getElementById('optResRemaining').textContent = `Presupuesto sobrante: $${s.presupuesto_remanente.toLocaleString('en-US', { minimumFractionDigits: 2 })}`;
+    document.getElementById('optResCoverage').textContent = `${s.demanda_total_cubierta_porcentaje}%`;
+    document.getElementById('optResCount').textContent = s.skus_seleccionados_conteo;
 
-    // 3. Renderizar las órdenes generadas
-    renderOrdersSection(orderRes.ordenes || []);
+    // Tabla de compras sugeridas
+    const tbody = document.getElementById('optItemsTableBody');
+    const items = s.items_recomendados || [];
+
+    tbody.innerHTML = items.map(item => `
+      <tr>
+        <td><code style="font-family: var(--font-mono); color: #93c5fd;">${item.sku_code}</code></td>
+        <td style="font-weight: 500;">${item.nombre_producto}</td>
+        <td><span class="badge badge-neutral">${item.proveedor_nombre}</span></td>
+        <td>${item.demanda_proyectada} uds</td>
+        <td>${item.stock_actual} uds</td>
+        <td style="color: var(--warning); font-weight: 600;">${item.deficit_unidades} uds</td>
+        <td><strong>${item.cantidad_sugerida_ml} uds</strong></td>
+        <td>$${item.costo_unitario.toFixed(2)}</td>
+        <td style="font-weight: 700; color: #ffffff;">$${item.subtotal.toFixed(2)}</td>
+      </tr>
+    `).join('');
+
+    document.getElementById('optimizationResultsBlock').style.display = 'block';
+    showToast('Plan de compras calculado con éxito', 'success');
 
   } catch (err) {
-    showToast(`Error al generar el plan: ${err.message}`, 'error');
+    showToast(err.message, 'error');
   } finally {
     btn.disabled = false;
-    btn.textContent = '⚡ Calcular Predicciones y Plan de Compras';
+    btn.textContent = 'Calcular Compras Óptimas';
+  }
+}
+
+async function handleGenerateOrders() {
+  if (!lastOptimizationSessionId) {
+    showToast('Primero debes calcular un plan de compras', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('btnGenerateOrders');
+  btn.disabled = true;
+  btn.textContent = 'Generando órdenes...';
+
+  try {
+    const res = await api.generateOrdersFromSession(lastOptimizationSessionId);
+    showToast(res.message, 'success');
+
+    // Cambiar automáticamente a la ventana de órdenes
+    document.querySelector('[data-tab="tab-orders"]').click();
+  } catch (err) {
+    showToast(err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Generar Órdenes de Compra';
   }
 }
 
 // -----------------------------------------------------------------------------
-// SECCIÓN DE ÓRDENES GENERADAS
+// VENTANA 4: ÓRDENES DE COMPRA
 // -----------------------------------------------------------------------------
-function renderOrdersSection(orders) {
-  const section = document.getElementById('ordersSection');
-  const container = document.getElementById('ordersCardsContainer');
+async function loadOrders() {
+  const container = document.getElementById('ordersContainer');
+  const filter = document.getElementById('filterOrderStatus').value;
+  container.innerHTML = '<p style="color: var(--text-dim); padding: 2rem;">Cargando órdenes...</p>';
 
-  if (!orders || orders.length === 0) {
-    section.style.display = 'none';
-    return;
-  }
+  try {
+    const res = await api.getOrders(filter);
+    const orders = res.items || [];
 
-  section.style.display = 'block';
+    if (orders.length === 0) {
+      container.innerHTML = '<p style="color: var(--text-dim); padding: 2rem; text-align: center;">No hay órdenes de compra registradas para este filtro.</p>';
+      return;
+    }
 
-  container.innerHTML = orders.map(ord => {
-    const totalCostStr = ord.costo_total_orden?.toLocaleString('en-US', { minimumFractionDigits: 2 });
-    const etaDate = ord.fecha_entrega_estimada ? new Date(ord.fecha_entrega_estimada).toLocaleDateString('es-ES', { day: 'numeric', month: 'long', year: 'numeric' }) : 'Próximos días';
+    container.innerHTML = orders.map(ord => {
+      const isDraft = ord.estado === 'BORRADOR_PROPUESTA';
+      const isApproved = ord.estado === 'APROBADA';
 
-    const itemsListHtml = (ord.items || []).map(it => `
-      <div style="display: flex; justify-content: space-between; padding: 0.5rem 0; border-bottom: 1px solid rgba(255,255,255,0.05);">
-        <div>
-          <strong>${it.nombre_producto}</strong> <span style="color: var(--text-dim);">(${it.sku_code})</span>
-        </div>
-        <div>
-          <span>${it.cantidad_sugerida_ml} unidades</span> — <strong style="color: #ffffff;">$${it.subtotal.toFixed(2)}</strong>
-        </div>
-      </div>
-    `).join('');
+      const badgeClass = isDraft ? 'badge-warning' : isApproved ? 'badge-success' : 'badge-neutral';
+      const statusLabel = isDraft ? 'Borrador pendiente' : isApproved ? 'Aprobada' : ord.estado;
 
-    return `
-      <div class="order-banner-card" id="order-card-${ord._id}">
-        <div class="order-banner-header">
-          <div>
-            <div style="display: flex; align-items: center; gap: 0.75rem;">
-              <span class="order-code">${ord.codigo_orden}</span>
-              <span class="order-badge draft">Propuesta en Borrador</span>
+      const dateStr = new Date(ord.fecha_generacion).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' });
+      const etaStr = ord.fecha_entrega_estimada ? new Date(ord.fecha_entrega_estimada).toLocaleDateString('es-ES', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A';
+
+      const itemsRows = (ord.items || []).map(it => `
+        <tr>
+          <td><code style="font-family: var(--font-mono); color: #93c5fd;">${it.sku_code}</code></td>
+          <td>${it.nombre_producto}</td>
+          <td><strong>${it.cantidad_sugerida_ml} uds</strong></td>
+          <td>$${it.costo_unitario?.toFixed(2)}</td>
+          <td style="font-weight: 700;">$${it.subtotal?.toFixed(2)}</td>
+        </tr>
+      `).join('');
+
+      return `
+        <div class="table-card" style="padding: 1.25rem;" id="order-${ord._id}">
+          <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem; border-bottom: 1px solid var(--border-light); padding-bottom: 0.75rem;">
+            <div>
+              <span style="font-family: var(--font-mono); font-weight: 700; font-size: 1.05rem; color: #ffffff;">${ord.codigo_orden}</span>
+              <span class="badge ${badgeClass}" style="margin-left: 0.5rem;">${statusLabel}</span>
+              <div style="font-size: 0.8rem; color: var(--text-muted); margin-top: 0.2rem;">
+                Fecha: ${dateStr} | Llegada estimada: <strong>${etaStr}</strong>
+              </div>
             </div>
-            <div style="font-size: 0.85rem; color: var(--text-muted); margin-top: 0.35rem;">
-              Fecha estimada de llegada: <strong>${etaDate}</strong>
+
+            <div style="text-align: right;">
+              <div style="font-size: 0.75rem; color: var(--text-muted);">Total Orden</div>
+              <div style="font-size: 1.3rem; font-weight: 700; color: #ffffff;">$${ord.costo_total_orden?.toFixed(2)} USD</div>
             </div>
           </div>
-          <div style="text-align: right;">
-            <div style="font-size: 0.75rem; color: var(--text-dim);">INVERSIÓN TOTAL</div>
-            <div style="font-size: 1.5rem; font-weight: 800; color: #ffffff;">$${totalCostStr} USD</div>
+
+          <div class="table-wrapper" style="margin-bottom: 1rem;">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Producto</th>
+                  <th>Cantidad Pedida</th>
+                  <th>Costo Unitario</th>
+                  <th>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${itemsRows}
+              </tbody>
+            </table>
           </div>
-        </div>
 
-        <div style="margin-bottom: 1.5rem;">
-          <div style="font-size: 0.8rem; font-weight: 700; color: var(--text-muted); text-transform: uppercase; margin-bottom: 0.5rem;">Productos incluidos en este pedido:</div>
-          ${itemsListHtml}
+          ${isDraft ? `
+            <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+              <button class="btn btn-danger btn-sm btn-cancel-ord" data-id="${ord._id}">Cancelar</button>
+              <button class="btn btn-success btn-sm btn-approve-ord" data-id="${ord._id}">Aprobar Orden</button>
+            </div>
+          ` : ''}
         </div>
+      `;
+    }).join('');
 
-        <div style="display: flex; justify-content: flex-end; gap: 0.75rem;">
-          <button class="btn btn-success btn-approve" data-id="${ord._id}">
-            ✅ Aprobar Orden para Despacho
-          </button>
-        </div>
-      </div>
-    `;
-  }).join('');
-
-  // Asignar listeners de aprobación
-  container.querySelectorAll('.btn-approve').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const orderId = btn.dataset.id;
-      btn.disabled = true;
-      btn.textContent = 'Aprobando...';
-      try {
-        await api.approveOrder(orderId);
-        showToast('¡Orden de compra aprobada exitosamente!', 'success');
-        const card = document.getElementById(`order-card-${orderId}`);
-        const badge = card.querySelector('.order-badge');
-        badge.className = 'order-badge approved';
-        badge.textContent = '✓ Aprobada Formalmente';
-        btn.remove();
-      } catch (err) {
-        showToast(err.message, 'error');
-        btn.disabled = false;
-        btn.textContent = '✅ Aprobar Orden para Despacho';
-      }
+    // Listeners de aprobación y cancelación
+    container.querySelectorAll('.btn-approve-ord').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        try {
+          await api.approveOrder(id);
+          showToast('Orden aprobada correctamente', 'success');
+          loadOrders();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
     });
-  });
 
-  // Scroll suave hacia la sección de órdenes
-  section.scrollIntoView({ behavior: 'smooth' });
+    container.querySelectorAll('.btn-cancel-ord').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const id = btn.dataset.id;
+        if (!confirm('¿Deseas cancelar esta orden? El presupuesto volverá a estar disponible.')) return;
+        try {
+          await api.cancelOrder(id);
+          showToast('Orden cancelada y presupuesto liberado', 'info');
+          loadOrders();
+        } catch (err) {
+          showToast(err.message, 'error');
+        }
+      });
+    });
+
+  } catch (err) {
+    container.innerHTML = `<p style="color: var(--danger); padding: 2rem;">Error al cargar órdenes: ${err.message}</p>`;
+  }
 }

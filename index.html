@@ -3,193 +3,308 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>SAAML - Asistente Inteligente de Compras e Inventario</title>
-  <meta name="description" content="Predicción automática de demanda con Inteligencia Artificial y optimización de compras bajo presupuesto.">
+  <title>SAAML - Gestión de Inventario y Predicción de Compras</title>
   <link rel="stylesheet" href="/src/style.css">
 </head>
 <body>
 
-  <!-- Encabezado simple y claro -->
-  <header class="app-header">
-    <div class="brand-wrapper">
-      <div class="brand-logo">
-        <span class="logo-icon">📊</span>
-        <div>
-          <div class="logo-title">SAAML</div>
-          <div class="logo-subtitle">Asistente de Inventario y Predicción de Ventas</div>
-        </div>
-      </div>
+  <!-- Encabezado Estándar -->
+  <header class="header">
+    <div class="header-left">
+      <div class="brand-title">SAAML — Aprovisionamiento Inteligente</div>
     </div>
 
-    <div class="header-actions">
-      <!-- Indicador de conexión -->
-      <div class="status-pill" id="healthPill">
+    <div class="header-right">
+      <div class="status-badge" id="statusBadge" title="Estado de la conexión al servidor">
         <span class="status-dot" id="statusDot"></span>
         <span id="statusText">Conectando...</span>
       </div>
 
-      <!-- Ajustes de servidor -->
-      <button class="btn btn-secondary btn-sm" id="btnConfigApi" title="Cambiar servidor (Local / Nube)">
-        ⚙️ <span id="currentApiHost">localhost:8000</span>
+      <button class="btn btn-secondary btn-sm" id="btnConfigApi" title="Cambiar servidor (Localhost / Render)">
+        Servidor: <span id="currentApiHost">localhost:8000</span>
       </button>
 
-      <!-- Usuario -->
       <div id="userContainer">
-        <button class="btn btn-primary btn-sm" id="btnOpenLogin">👤 Ingresar</button>
+        <button class="btn btn-primary btn-sm" id="btnOpenLogin">Iniciar Sesión</button>
       </div>
     </div>
   </header>
 
-  <main class="main-content">
+  <!-- Pestañas / Ventanas de Navegación -->
+  <nav class="nav-tabs">
+    <button class="tab-btn active" data-tab="tab-inventory">
+      Inventario de Productos
+    </button>
+    <button class="tab-btn" data-tab="tab-forecast">
+      Predicción de Ventas
+    </button>
+    <button class="tab-btn" data-tab="tab-budget-plan">
+      Plan de Compras con Presupuesto
+    </button>
+    <button class="tab-btn" data-tab="tab-orders">
+      Órdenes de Compra
+    </button>
+  </nav>
 
-    <!-- BARRA SUPERIOR DE CONTROL EJECUTIVO -->
-    <section class="control-banner">
-      <div class="control-banner-text">
-        <h2>¿Cuánto vamos a vender y qué necesitamos comprar?</h2>
-        <p>La inteligencia artificial analiza las ventas históricas de todo el año para decirte con precisión qué productos se agotarán y cómo invertir tu presupuesto.</p>
+  <!-- Contenido Principal -->
+  <main class="container">
+
+    <!-- VENTANA 1: INVENTARIO DE PRODUCTOS -->
+    <section class="tab-view active" id="tab-inventory">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Inventario y Catálogo de Productos</h1>
+          <p class="view-subtitle">Monitoreo de existencias actuales, costos unitarios y nivel mínimo de seguridad.</p>
+        </div>
+        <button class="btn btn-secondary btn-sm" id="btnRefreshCatalog">Actualizar Lista</button>
       </div>
 
-      <div class="control-banner-actions">
-        <div class="control-group">
-          <label for="selectHorizon">Periodo a proyectar:</label>
-          <select id="selectHorizon" class="form-input custom-select">
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-label">Total Productos</div>
+          <div class="kpi-value" id="kpiTotalSkus">-</div>
+          <div class="kpi-sub">En catálogo activo</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Valor Total en Bodega</div>
+          <div class="kpi-value" id="kpiStockValue">$0.00</div>
+          <div class="kpi-sub">Valorizado a costo unitario</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Productos con Stock Bajo</div>
+          <div class="kpi-value" id="kpiLowStock" style="color: var(--danger);">-</div>
+          <div class="kpi-sub">Por debajo del stock mínimo</div>
+        </div>
+      </div>
+
+      <div class="table-card">
+        <div class="table-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>Código (SKU)</th>
+                <th>Nombre del Producto</th>
+                <th>Categoría</th>
+                <th>Stock Actual</th>
+                <th>Stock Mínimo</th>
+                <th>Costo Unitario</th>
+                <th>Precio Venta</th>
+                <th>Estado</th>
+              </tr>
+            </thead>
+            <tbody id="inventoryTableBody">
+              <tr><td colspan="8" style="text-align: center; color: var(--text-dim); padding: 2rem;">Cargando inventario...</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
+    <!-- VENTANA 2: PREDICCIÓN DE VENTAS (DEMANDA) -->
+    <section class="tab-view" id="tab-forecast">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Predicción de Ventas por Producto</h1>
+          <p class="view-subtitle">Cálculo estimado de unidades que se van a vender y diagnóstico de si el inventario actual alcanza.</p>
+        </div>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label style="font-size: 0.85rem; color: var(--text-muted);">Periodo:</label>
+          <select id="selectHorizon" class="form-input">
             <option value="7">Próximos 7 días (1 semana)</option>
             <option value="14" selected>Próximos 14 días (2 semanas)</option>
             <option value="30">Próximos 30 días (1 mes)</option>
           </select>
+          <button class="btn btn-secondary btn-sm" id="btnTrainML" title="Reentrenar modelo">
+            Actualizar Modelo
+          </button>
         </div>
+      </div>
 
-        <div class="control-group">
-          <label for="inputBudget">Presupuesto disponible (USD):</label>
-          <div class="input-currency">
-            <span>$</span>
-            <input type="number" id="inputBudget" class="form-input" value="15000" min="500" step="500">
+      <div class="kpi-row">
+        <div class="kpi-card">
+          <div class="kpi-label">Demanda Total Esperada</div>
+          <div class="kpi-value" id="kpiTotalDemandForecast">-</div>
+          <div class="kpi-sub" id="kpiForecastDaysSubtitle">En los próximos 14 días</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Productos con Riesgo de Agotarse</div>
+          <div class="kpi-value" id="kpiForecastRiskCount" style="color: var(--warning);">-</div>
+          <div class="kpi-sub">El stock no cubre el periodo</div>
+        </div>
+        <div class="kpi-card">
+          <div class="kpi-label">Productos con Stock Suficiente</div>
+          <div class="kpi-value" id="kpiForecastSafeCount" style="color: var(--success);">-</div>
+          <div class="kpi-sub">Cubren la demanda estimada</div>
+        </div>
+      </div>
+
+      <!-- Tarjetas Claras de Predicción por Producto -->
+      <div class="cards-grid" id="forecastCardsContainer">
+        <p style="color: var(--text-dim); padding: 2rem;">Calculando predicciones de ventas...</p>
+      </div>
+    </section>
+
+    <!-- VENTANA 3: PLAN DE COMPRAS CON PRESUPUESTO -->
+    <section class="tab-view" id="tab-budget-plan">
+      <div class="view-header">
+        <div>
+          <h1 class="view-title">Plan de Compras y Optimización de Presupuesto</h1>
+          <p class="view-subtitle">Calcula exactamente qué productos comprar para no quedarte sin stock sin superar tu límite de dinero.</p>
+        </div>
+      </div>
+
+      <div class="filter-bar">
+        <div style="display: flex; gap: 1.5rem; align-items: flex-end; flex-wrap: wrap;">
+          <div class="form-group">
+            <label class="form-label">Ciclo Presupuestal</label>
+            <select id="optSelectCycle" class="form-input" style="min-width: 220px;"></select>
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Presupuesto Disponible (USD)</label>
+            <input type="number" id="optInputBudget" class="form-input" value="15000" min="500" step="500" style="width: 160px;">
+          </div>
+
+          <div class="form-group">
+            <label class="form-label">Días a Cubrir</label>
+            <input type="number" id="optInputDays" class="form-input" value="14" min="1" max="60" style="width: 100px;">
           </div>
         </div>
 
-        <button class="btn btn-primary btn-large" id="btnRunPredictionAndPlan">
-          ⚡ Calcular Predicciones y Plan de Compras
+        <button class="btn btn-primary" id="btnRunOptimization">
+          Calcular Compras Óptimas
         </button>
       </div>
+
+      <div id="optimizationResultsBlock" style="display: none;">
+        <div class="kpi-row">
+          <div class="kpi-card">
+            <div class="kpi-label">Total a Invertir</div>
+            <div class="kpi-value" id="optResSpent" style="color: #60a5fa;">$0.00</div>
+            <div class="kpi-sub" id="optResRemaining">Presupuesto sobrante: $0.00</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Ventas Cubiertas</div>
+            <div class="kpi-value" id="optResCoverage" style="color: var(--success);">0%</div>
+            <div class="kpi-sub">Porcentaje de demanda satisfecha</div>
+          </div>
+          <div class="kpi-card">
+            <div class="kpi-label">Productos Seleccionados</div>
+            <div class="kpi-value" id="optResCount">0</div>
+            <div class="kpi-sub">Con pedido recomendado</div>
+          </div>
+        </div>
+
+        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.75rem;">
+          <h2 style="font-size: 1rem; font-weight: 600; color: #ffffff;">Detalle de Compras Sugeridas</h2>
+          <button class="btn btn-success" id="btnGenerateOrders">
+            Generar Órdenes de Compra
+          </button>
+        </div>
+
+        <div class="table-card">
+          <div class="table-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>Código</th>
+                  <th>Producto</th>
+                  <th>Proveedor</th>
+                  <th>Ventas Estimadas</th>
+                  <th>Stock Actual</th>
+                  <th>Faltante (Déficit)</th>
+                  <th>Cantidad a Comprar</th>
+                  <th>Costo Unitario</th>
+                  <th>Subtotal</th>
+                </tr>
+              </thead>
+              <tbody id="optItemsTableBody"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
     </section>
 
-    <!-- RESUMEN EJECUTIVO EN 3 NÚMEROS CLAVE -->
-    <section class="summary-cards">
-      <div class="summary-card card-blue">
-        <div class="card-icon">📈</div>
-        <div class="card-content">
-          <div class="card-label">Ventas Esperadas Totales</div>
-          <div class="card-number" id="kpiTotalDemand">-</div>
-          <div class="card-desc" id="kpiDemandHorizon">En los próximos 14 días</div>
-        </div>
-      </div>
-
-      <div class="summary-card card-amber">
-        <div class="card-icon">⚠️</div>
-        <div class="card-content">
-          <div class="card-label">Productos con Riesgo de Agotarse</div>
-          <div class="card-number" id="kpiRiskCount">-</div>
-          <div class="card-desc">No alcanzan a cubrir la demanda</div>
-        </div>
-      </div>
-
-      <div class="summary-card card-green">
-        <div class="card-icon">💰</div>
-        <div class="card-content">
-          <div class="card-label">Inversión Recomendada</div>
-          <div class="card-number" id="kpiRecommendedBudget">$0.00</div>
-          <div class="card-desc" id="kpiBudgetStatus">Dentro de tu presupuesto</div>
-        </div>
-      </div>
-    </section>
-
-    <!-- LISTADO CLARO Y VISUAL DE PRODUCTOS CON SU PREDICCIÓN -->
-    <section class="products-section">
-      <div class="section-top">
+    <!-- VENTANA 4: ÓRDENES DE COMPRA -->
+    <section class="tab-view" id="tab-orders">
+      <div class="view-header">
         <div>
-          <h2>Predicción de Ventas y Estado de Inventario</h2>
-          <p>Revisa para cada producto cuánto se espera vender, cuántos días de inventario te quedan y qué cantidad se aconseja ordenar.</p>
+          <h1 class="view-title">Órdenes de Compra</h1>
+          <p class="view-subtitle">Revisión de órdenes agrupadas por proveedor y aprobación para envío.</p>
         </div>
-        <div class="legend-pills">
-          <span class="legend-pill pill-danger">● Requiere Compra Urgente</span>
-          <span class="legend-pill pill-success">● Inventario Suficiente</span>
-        </div>
-      </div>
-
-      <div class="products-grid" id="productsGrid">
-        <div class="loading-state">
-          <div class="spinner"></div>
-          <p>Cargando predicciones de productos con Inteligencia Artificial...</p>
-        </div>
-      </div>
-    </section>
-
-    <!-- SECCIÓN DE ÓRDENES DE COMPRA GENERADAS -->
-    <section class="orders-section" id="ordersSection" style="display: none;">
-      <div class="section-top">
-        <div>
-          <h2>Órdenes de Compra Sugeridas</h2>
-          <p>El sistema agrupó automáticamente las compras recomendadas por proveedor. Puedes revisarlas y aprobarlas con un solo clic.</p>
+        <div style="display: flex; gap: 0.5rem; align-items: center;">
+          <label style="font-size: 0.85rem; color: var(--text-muted);">Filtrar por estado:</label>
+          <select id="filterOrderStatus" class="form-input">
+            <option value="">Todas las órdenes</option>
+            <option value="BORRADOR_PROPUESTA">Borradores pendientes</option>
+            <option value="APROBADA">Aprobadas</option>
+            <option value="RECIBIDA_TOTAL">Histórico recibidas</option>
+          </select>
+          <button class="btn btn-secondary btn-sm" id="btnRefreshOrders">Actualizar</button>
         </div>
       </div>
 
-      <div class="orders-cards-container" id="ordersCardsContainer"></div>
+      <div id="ordersContainer" style="display: flex; flex-direction: column; gap: 1rem;">
+        <p style="color: var(--text-dim); padding: 2rem;">Cargando órdenes de compra...</p>
+      </div>
     </section>
 
   </main>
 
-  <!-- MODAL: INICIAR SESIÓN -->
+  <!-- MODAL: LOGIN -->
   <div class="modal-overlay" id="loginModal">
-    <div class="modal-card">
-      <h3 class="modal-title">Acceso al Sistema</h3>
-      <p class="modal-subtitle">Inicia sesión para gestionar el inventario y aprobar compras.</p>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">Iniciar Sesión</h3>
+        <button class="btn btn-secondary btn-sm" id="btnCloseLogin">✕</button>
+      </div>
 
-      <div class="quick-demo-buttons">
-        <button type="button" class="btn btn-secondary btn-sm" id="btnFillAdmin">👑 Ingresar como Administrador</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="btnFillGerente">💼 Ingresar como Gerente</button>
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <button type="button" class="btn btn-secondary btn-sm" id="btnFillAdmin" style="flex: 1;">Cuenta Administrador</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnFillGerente" style="flex: 1;">Cuenta Gerente</button>
       </div>
 
       <form id="loginForm">
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom: 0.85rem;">
           <label class="form-label">Correo Electrónico</label>
           <input type="email" id="loginEmail" class="form-input" placeholder="admin@saaml.com" required>
         </div>
-        <div class="form-group">
+        <div class="form-group" style="margin-bottom: 1.25rem;">
           <label class="form-label">Contraseña</label>
           <input type="password" id="loginPassword" class="form-input" placeholder="••••••••" required>
         </div>
-        <div class="modal-actions">
-          <button type="button" class="btn btn-secondary" id="btnCloseLogin">Cerrar</button>
-          <button type="submit" class="btn btn-primary" id="btnSubmitLogin">Iniciar Sesión</button>
+        <div style="display: flex; justify-content: flex-end; gap: 0.5rem;">
+          <button type="submit" class="btn btn-primary" style="width: 100%;">Ingresar</button>
         </div>
       </form>
     </div>
   </div>
 
-  <!-- MODAL: CAMBIAR SERVIDOR BACKEND -->
+  <!-- MODAL: CONFIGURAR SERVIDOR -->
   <div class="modal-overlay" id="configApiModal">
-    <div class="modal-card">
-      <h3 class="modal-title">Conexión con el Servidor Backend</h3>
-      <p class="modal-subtitle">Alterna fácilmente entre tu backend local y la nube en Render.</p>
-
-      <div class="quick-demo-buttons">
-        <button type="button" class="btn btn-secondary btn-sm" id="btnSetLocalhost">💻 Localhost (8000)</button>
-        <button type="button" class="btn btn-secondary btn-sm" id="btnSetRender">☁️ Render en la Nube</button>
+    <div class="modal-box">
+      <div class="modal-header">
+        <h3 class="modal-title">Configuración de Servidor API</h3>
+        <button class="btn btn-secondary btn-sm" id="btnCloseConfigApi">✕</button>
       </div>
 
-      <div class="form-group">
-        <label class="form-label">URL de la API</label>
+      <div style="display: flex; gap: 0.5rem; margin-bottom: 1rem;">
+        <button type="button" class="btn btn-secondary btn-sm" id="btnSetLocalhost" style="flex: 1;">Localhost (8000)</button>
+        <button type="button" class="btn btn-secondary btn-sm" id="btnSetRender" style="flex: 1;">Render Nube</button>
+      </div>
+
+      <div class="form-group" style="margin-bottom: 1.25rem;">
+        <label class="form-label">URL Base del Backend</label>
         <input type="text" id="inputApiUrl" class="form-input" placeholder="http://localhost:8000/api/v1">
       </div>
 
-      <div class="modal-actions">
-        <button type="button" class="btn btn-secondary" id="btnCloseConfigApi">Cancelar</button>
-        <button type="button" class="btn btn-primary" id="btnSaveConfigApi">Conectar</button>
-      </div>
+      <button type="button" class="btn btn-primary" id="btnSaveConfigApi" style="width: 100%;">
+        Guardar y Conectar
+      </button>
     </div>
   </div>
 
-  <!-- NOTIFICACIONES TOAST -->
+  <!-- Contenedor Toast -->
   <div class="toast-container" id="toastContainer"></div>
 
   <script type="module" src="/src/main.js"></script>
