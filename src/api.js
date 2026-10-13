@@ -4,7 +4,7 @@
  * y llamadas completas a los módulos RF01-RF06.
  */
 
-const DEFAULT_API_URL = 'http://localhost:8000/api/v1';
+const DEFAULT_API_URL = 'https://saaml.onrender.com';
 
 export class SaamlApiClient {
   constructor() {
